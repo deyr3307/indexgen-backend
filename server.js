@@ -19,16 +19,20 @@ app.post('/api/generate-index', async (req, res) => {
     }
 
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const prompt = `You are an expert academic document analyzer. Analyze the following text (it may be unstructured class notes, biology taxonomy, or a lab report). 
-    Extract ALL main topics, categories (e.g., Phylum, Class, Corals, Ecdysis), and key concepts as Table of Contents headings. Predict approximate page numbers.
     
-    CRITICAL RULES:
-    1. You MUST return a raw JSON array of objects. 
-    2. Each object must have exactly these keys: "chapter" (use a serial number like "1", "2" if no formal chapter exists), "title" (the heading name), and "page".
-    3. Even if the text is messy, extract the top 5-15 logical topics. DO NOT return an empty array.
-    4. Return ONLY valid JSON. No markdown, no \`\`\`json blocks, no explanations.
-    
-    Document Text:
+    const prompt = `You are an elite academic document synthesizer. Your task is to deeply analyze the following extracted text from an uploaded document (which could be anything from lab reports, handwritten biology notes, to business cases) and generate a highly accurate, logically structured Table of Contents.
+
+    CRITICAL INSTRUCTIONS:
+    1. DEEP CONTEXTUAL UNDERSTANDING: Do not just pick random lines. Synthesize clean, professional headings. For example, if the text discusses differences between two things, the heading should be "Difference between X and Y". If it describes a process, use "Process of X".
+    2. UNIVERSAL ADAPTABILITY: This must work flawlessly for ANY subject. Identify the major thematic shifts to form the main headings (e.g., Protista, Ecdysis, Air Sacs, etc.).
+    3. STRICT JSON OUTPUT: You MUST return ONLY a raw JSON array of objects. No markdown formatting (\`\`\`json), no introductory text.
+    4. DATA STRUCTURE: Each object must exactly contain:
+       - "chapter": A sequential serial number (e.g., "1", "2", "3").
+       - "title": The synthesized, professional heading name.
+       - "page": Predict the approximate page number based on text flow.
+    5. NEVER return an empty array. Always extract the top 10-15 logical sections.
+
+    Document Text to Analyze:
     ${text}`;
 
     const result = await model.generateContent(prompt);
