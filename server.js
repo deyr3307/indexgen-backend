@@ -18,7 +18,7 @@ app.post('/api/generate-index', async (req, res) => {
       return res.status(400).json({ error: 'No text provided.' });
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
     
     const prompt = `You are an elite academic document synthesizer. Deeply analyze the following text and generate a Table of Contents.
     Synthesize professional headings (e.g., "Difference between X and Y" instead of random lines).
