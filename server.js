@@ -21,14 +21,15 @@ app.post('/api/generate-index', async (req, res) => {
     }
 
     // Deep Analysis Mode (Temperature 0.1 for high logic and analytical accuracy)
-    const model = genAI.getGenerativeModel({ 
-        model: 'gemini-pro',
+        const model = genAI.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
         generationConfig: {
             temperature: 0.1, 
             topP: 0.8,
             topK: 10,
         }
     });
+    
     
     // Universal Prompt for ANY subject (Science, Business, IT, etc.)
     const prompt = `You are a world-class academic and professional document analyzer, equivalent to the most advanced AI in the world. Your ONLY job is to deeply read the following extracted text from a document (which could be anything from a scientific lab report, an environmental impact study, a business analysis, or programming notes) and generate a perfectly accurate, logical Table of Contents.
