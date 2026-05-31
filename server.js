@@ -72,7 +72,7 @@ app.post('/api/generate-index', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 30000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
