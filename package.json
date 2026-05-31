@@ -1,7 +1,7 @@
 {
   "name": "indexgen-backend",
   "version": "3.0.0",
-  "description": "Backend for IndexGen Pro - Vision AI powered index generator",
+  "description": "Backend for IndexGen Pro - Vision AI powered",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
