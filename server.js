@@ -14,42 +14,60 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 app.post('/api/generate-index', async (req, res) => {
   try {
     const { text } = req.body;
-    if (!text) {
-      return res.status(400).json({ error: 'No text provided.' });
+    
+    if (!text || text.trim().length < 50) {
+      console.log("Error: Text is too short or empty.");
+      return res.status(400).json({ error: 'পিডিএফ থেকে পর্যাপ্ত টেক্সট পাওয়া যায়নি।' });
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    // Deep Analysis Mode (Temperature 0.1 for high logic and analytical accuracy)
+    const model = genAI.getGenerativeModel({ 
+        model: 'gemini-pro',
+        generationConfig: {
+            temperature: 0.1, 
+            topP: 0.8,
+            topK: 10,
+        }
+    });
     
-    const prompt = `You are an elite academic document synthesizer. Deeply analyze the following text and generate a Table of Contents.
-    Synthesize professional headings (e.g., "Difference between X and Y" instead of random lines).
+    // Universal Prompt for ANY subject (Science, Business, IT, etc.)
+    const prompt = `You are a world-class academic and professional document analyzer, equivalent to the most advanced AI in the world. Your ONLY job is to deeply read the following extracted text from a document (which could be anything from a scientific lab report, an environmental impact study, a business analysis, or programming notes) and generate a perfectly accurate, logical Table of Contents.
 
-    CRITICAL RULES:
-    1. OUTPUT FORMAT: You MUST return ONLY a valid JSON array. DO NOT include any markdown formatting like \`\`\`json. DO NOT add any introductory or concluding text (e.g., "Here is the output:").
-    2. DATA STRUCTURE: Each object must exactly contain:
-       - "chapter": A sequential serial number (e.g., "1", "2").
-       - "title": The synthesized heading.
-       - "page": Approximate page number.
-    3. Always extract the top 10-15 logical sections. Never return an empty array.
+    CRITICAL INSTRUCTIONS:
+    1. UNIVERSAL DEEP ANALYSIS: Read the text thoroughly. Identify the actual core topics, analytical sections, or chapters. Synthesize professional headings based on the actual context (e.g., "Introduction to the Study", "Methodology and Framework", "Detailed Data Analysis", "Conclusion and Recommendations"). Do NOT make up headings.
+    2. STRICT JSON: Return ONLY a valid JSON array. No markdown (\`\`\`json), no introductory words.
+    3. FORMAT: Each object MUST have:
+       - "chapter": Serial number (1, 2, 3...)
+       - "title": The accurately synthesized heading.
+       - "page": The predicted page number.
+    4. ACCURACY OVER SPEED: Take your time. Never return dummy data or an empty array. If the document is unstructured, logically divide it into 5-15 main conceptual themes.
 
-    Document Text to Analyze:
-    ${text}`;
+    DOCUMENT TEXT:
+    ${text.substring(0, 30000)}
+    `;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
     let output = response.text();
     
-    // Bulletproof JSON Extraction
+    console.log("Raw Output:", output);
+
     const jsonMatch = output.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       const cleanJson = jsonMatch[0];
-      res.json(JSON.parse(cleanJson));
+      const parsedArray = JSON.parse(cleanJson);
+      
+      if (parsedArray.length === 0) {
+         throw new Error("AI generated an empty array after analysis.");
+      }
+      return res.json(parsedArray);
     } else {
-      throw new Error("Failed to extract JSON array from Gemini response.");
+      throw new Error("Failed to extract JSON format.");
     }
 
   } catch (error) {
-    console.error("Backend Error:", error);
-    res.status(500).json({ error: 'Failed to generate index.' });
+    console.error("Analysis Error:", error);
+    res.status(500).json({ error: 'ডকুমেন্ট অ্যানালাইসিস করতে সমস্যা হয়েছে। দয়া করে আবার চেষ্টা করুন।' });
   }
 });
 
