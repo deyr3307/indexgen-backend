@@ -1,11 +1,10 @@
 {
   "name": "indexgen-backend",
-  "version": "2.0.0",
-  "description": "Backend for IndexGen Pro - AI powered index generator",
+  "version": "3.0.0",
+  "description": "Backend for IndexGen Pro - Vision AI powered index generator",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "@google/generative-ai": "latest",
@@ -13,8 +12,7 @@
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "mammoth": "^1.7.0",
-    "multer": "^1.4.5-lts.1",
-    "pdf-parse": "^1.1.1"
+    "multer": "^1.4.5-lts.1"
   },
   "engines": {
     "node": ">=18.0.0"
