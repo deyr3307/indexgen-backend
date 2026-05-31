@@ -3,176 +3,215 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const multer = require('multer');
-const pdfParse = require('pdf-parse');
-const mammoth = require('mammoth');
 const path = require('path');
+const fs = require('fs');
+const { execSync } = require('child_process');
 
 dotenv.config();
 
 const app = express();
 
-// ✅ CORS - সব origin allow করা হয়েছে (Render + AI Studio frontend এর জন্য)
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type']
-}));
+app.use(cors({ origin: '*', methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'] }));
+app.use(express.json({ limit: '100mb' }));
 
-app.use(express.json({ limit: '50mb' }));
-
-// ✅ Multer - ফাইল memory-তে রাখবে (disk এ না)
-const storage = multer.memoryStorage();
+// Multer - memory storage
 const upload = multer({
-  storage: storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 30 * 1024 * 1024 }, // 30MB
   fileFilter: (req, file, cb) => {
-    const allowed = ['.pdf', '.docx', '.doc', '.txt'];
+    const allowed = ['.pdf', '.docx', '.doc', '.txt', '.jpg', '.jpeg', '.png'];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('শুধু PDF, DOCX, DOC, TXT ফাইল সাপোর্ট করে'));
-    }
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error('শুধু PDF, DOCX, TXT, Image ফাইল সাপোর্ট করে'));
   }
 });
 
-// ✅ Gemini AI setup
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ✅ Health check route - Render verify করার জন্য
+// Health check
 app.get('/', (req, res) => {
-  res.json({ status: 'IndexGen Backend চলছে ✅', version: '2.0' });
+  res.json({ status: '✅ IndexGen Backend চলছে - Vision Mode Active', version: '3.0' });
 });
 
-// ✅ Text থেকে extract করার helper functions
-async function extractTextFromFile(file) {
-  const ext = path.extname(file.originalname).toLowerCase();
-
-  if (ext === '.pdf') {
-    const data = await pdfParse(file.buffer);
-    return data.text;
+// PDF to base64 images using pdftoppm (poppler)
+function pdfToImages(pdfBuffer) {
+  const tmpDir = `/tmp/pdf_${Date.now()}`;
+  fs.mkdirSync(tmpDir, { recursive: true });
+  
+  const pdfPath = `${tmpDir}/input.pdf`;
+  fs.writeFileSync(pdfPath, pdfBuffer);
+  
+  try {
+    // pdftoppm দিয়ে PDF থেকে image বানাও (Render-এ poppler available)
+    execSync(`pdftoppm -jpeg -r 150 "${pdfPath}" "${tmpDir}/page"`, { timeout: 60000 });
+    
+    const files = fs.readdirSync(tmpDir)
+      .filter(f => f.startsWith('page') && f.endsWith('.jpg'))
+      .sort();
+    
+    const images = files.map(f => {
+      const imgBuffer = fs.readFileSync(`${tmpDir}/${f}`);
+      return imgBuffer.toString('base64');
+    });
+    
+    // Cleanup
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    return images;
+    
+  } catch (err) {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error('PDF থেকে image convert করতে পারেনি: ' + err.message);
   }
-
-  if (ext === '.docx' || ext === '.doc') {
-    const result = await mammoth.extractRawText({ buffer: file.buffer });
-    return result.value;
-  }
-
-  if (ext === '.txt') {
-    return file.buffer.toString('utf-8');
-  }
-
-  throw new Error('Unsupported file type');
 }
 
-// ✅ MAIN ROUTE - ফাইল দিয়ে index generate করা
+// MAIN ROUTE - Gemini Vision দিয়ে হাতে লেখা PDF পড়বে
 app.post('/api/generate-index', upload.single('file'), async (req, res) => {
   try {
-    let text = '';
-
-    // ফাইল আছে কিনা চেক
-    if (req.file) {
-      console.log('ফাইল পাওয়া গেছে:', req.file.originalname);
-      text = await extractTextFromFile(req.file);
-    } else if (req.body.text) {
-      // Direct text ও accept করবে
-      text = req.body.text;
-    } else {
-      return res.status(400).json({
-        error: 'কোনো ফাইল বা text পাওয়া যায়নি। file বা text পাঠাও।'
-      });
-    }
-
-    // Text খুব ছোট হলে error
-    if (!text || text.trim().length < 50) {
-      return res.status(400).json({
-        error: 'Document-এ পর্যাপ্ত text নেই। কমপক্ষে 50 character লাগবে।'
-      });
-    }
-
-    console.log('Text extracted, length:', text.length);
-
-    // ✅ Gemini AI call
     const model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
-      generationConfig: {
-        temperature: 0.1,
-        topP: 0.8,
-        topK: 10,
-      }
+      generationConfig: { temperature: 0.1, topP: 0.8 }
     });
 
-    const prompt = `You are a world-class academic document analyzer. Analyze this document and create a detailed table of contents / index.
+    let contentParts = [];
+    let isImageMode = false;
+
+    if (req.file) {
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      
+      if (ext === '.pdf') {
+        console.log('📄 PDF পাওয়া গেছে, image-এ convert করছি...');
+        
+        let images;
+        try {
+          images = pdfToImages(req.file.buffer);
+          console.log(`✅ ${images.length} page image তৈরি হয়েছে`);
+          isImageMode = true;
+        } catch (convErr) {
+          console.log('⚠️ pdftoppm fail, direct PDF send করছি...');
+          // pdftoppm না থাকলে directly PDF base64 পাঠাও
+          const pdfBase64 = req.file.buffer.toString('base64');
+          contentParts.push({
+            inlineData: { mimeType: 'application/pdf', data: pdfBase64 }
+          });
+        }
+        
+        if (isImageMode && images && images.length > 0) {
+          // প্রতিটা page image add করো (max 15 pages)
+          const maxPages = Math.min(images.length, 15);
+          for (let i = 0; i < maxPages; i++) {
+            contentParts.push({
+              inlineData: { mimeType: 'image/jpeg', data: images[i] }
+            });
+          }
+        }
+        
+      } else if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+        const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+        contentParts.push({
+          inlineData: { mimeType, data: req.file.buffer.toString('base64') }
+        });
+        isImageMode = true;
+        
+      } else if (ext === '.txt') {
+        const text = req.file.buffer.toString('utf-8');
+        if (text.trim().length < 50) {
+          return res.status(400).json({ error: 'টেক্সট খুব ছোট' });
+        }
+        contentParts.push({ text: `DOCUMENT TEXT:\n${text.substring(0, 30000)}` });
+        
+      } else if (['.docx', '.doc'].includes(ext)) {
+        // DOCX এর জন্য mammoth ব্যবহার
+        const mammoth = require('mammoth');
+        const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+        const text = result.value;
+        if (text.trim().length < 50) {
+          return res.status(400).json({ error: 'DOCX ফাইলে পর্যাপ্ত টেক্সট নেই' });
+        }
+        contentParts.push({ text: `DOCUMENT TEXT:\n${text.substring(0, 30000)}` });
+      }
+      
+    } else if (req.body.text) {
+      const text = req.body.text;
+      if (text.trim().length < 20) {
+        return res.status(400).json({ error: 'টেক্সট খুব ছোট' });
+      }
+      contentParts.push({ text: `DOCUMENT TEXT:\n${text.substring(0, 30000)}` });
+      
+    } else {
+      return res.status(400).json({ error: 'কোনো ফাইল বা text পাওয়া যায়নি' });
+    }
+
+    // Prompt add করো
+    const prompt = isImageMode 
+      ? `You are an expert at reading handwritten academic documents. These images contain handwritten assignment pages.
+
+TASK: Read ALL the handwritten text carefully and create a complete Table of Contents / Index.
 
 CRITICAL INSTRUCTIONS:
-1. UNIVERSAL DEEP ANALYSIS: Read the text thoroughly and identify ALL chapters, sections, and major topics.
-2. STRICT JSON: Return ONLY a valid JSON array and nothing else. No markdown, no backticks, no explanation.
-3. FORMAT: Each object MUST have exactly these fields:
-   - "chapter": Serial number (1, 2, 3...)
-   - "title": The accurately synthesized heading/topic name
-   - "page": The predicted page number (estimate based on content position)
-4. ACCURACY OVER SPEED: Take your time. Never guess randomly.
-5. If this is a lab report, identify: Title, Objective, Theory, Apparatus, Procedure, Observations, Results, Calculations, Discussion, Conclusion, References.
+1. Read every page image carefully - it's handwritten notes
+2. Identify every major topic, heading, section marked with symbols like ⊞, *, ** etc.
+3. Return ONLY a valid JSON array, nothing else, no markdown backticks
+4. Each object MUST have: "chapter" (number), "title" (topic name), "page" (page number)
+5. Include ALL topics found across all pages
 
-DOCUMENT TEXT:
-${text.substring(0, 30000)}`;
+Return format example:
+[{"chapter":1,"title":"Classification of Protista","page":1},{"chapter":2,"title":"Ecdysis","page":3}]`
+      : `You are an expert academic document analyzer. Create a complete Table of Contents.
 
-    const result = await model.generateContent(prompt);
+INSTRUCTIONS:
+1. Identify ALL major topics, chapters, sections
+2. Return ONLY a valid JSON array, no markdown, no backticks
+3. Each object: "chapter" (number), "title" (topic name), "page" (page number)`;
+
+    contentParts.push({ text: prompt });
+
+    console.log('🤖 Gemini Vision API call করছি...');
+    const result = await model.generateContent(contentParts);
     const response = await result.response;
     let output = response.text();
 
-    console.log('AI Raw Output (first 500 chars):', output.substring(0, 500));
+    console.log('Raw output (500 chars):', output.substring(0, 500));
 
-    // JSON extract করা - markdown backticks থাকলেও কাজ করবে
+    // JSON clean করো
     output = output.replace(/```json/gi, '').replace(/```/g, '').trim();
-
-    // Array খোঁজা
+    
     const jsonMatch = output.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
-      const cleanJson = jsonMatch[0];
-      const parsedArray = JSON.parse(cleanJson);
-
-      if (parsedArray.length === 0) {
-        throw new Error('AI empty index তৈরি করেছে');
-      }
-
-      console.log('Index তৈরি হয়েছে, items:', parsedArray.length);
-      return res.json(parsedArray);
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.length === 0) throw new Error('AI empty index তৈরি করেছে');
+      console.log(`✅ Index তৈরি হয়েছে: ${parsed.length} টি item`);
+      return res.json(parsed);
     } else {
-      console.error('JSON match হয়নি। Raw output:', output);
+      console.error('JSON match হয়নি। Full output:', output);
       throw new Error('AI থেকে valid JSON আসেনি');
     }
 
   } catch (error) {
-    console.error('Error:', error.message);
-
-    // Specific error messages
-    if (error.message.includes('API_KEY')) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY সঠিক নয় বা set করা হয়নি' });
+    console.error('❌ Error:', error.message);
+    
+    if (error.message.includes('API_KEY') || error.message.includes('API key')) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY সঠিক নয়' });
     }
-    if (error.message.includes('quota')) {
-      return res.status(429).json({ error: 'AI API quota শেষ হয়ে গেছে। পরে try করো।' });
+    if (error.message.includes('quota') || error.message.includes('429')) {
+      return res.status(429).json({ error: 'AI quota শেষ। কিছুক্ষণ পর try করো' });
     }
-
-    return res.status(500).json({
-      error: error.message || 'Server-এ সমস্যা হয়েছে',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    if (error.message.includes('timeout')) {
+      return res.status(504).json({ error: 'Request timeout। PDF অনেক বড়, ছোট করে try করো' });
+    }
+    
+    return res.status(500).json({ error: error.message || 'Server error' });
   }
 });
 
-// ✅ Multer error handling
+// Multer error
 app.use((error, req, res, next) => {
-  if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'ফাইল সাইজ 20MB এর বেশি হতে পারবে না' });
-    }
+  if (error.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'ফাইল 30MB এর বেশি হতে পারবে না' });
   }
   res.status(400).json({ error: error.message });
 });
 
-// ✅ PORT - Render এর জন্য process.env.PORT ব্যবহার করা MUST
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ IndexGen Backend চলছে port ${PORT}-এ`);
+  console.log(`✅ IndexGen Backend v3.0 চলছে port ${PORT}-এ`);
 });
