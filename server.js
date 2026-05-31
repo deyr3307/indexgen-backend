@@ -15,11 +15,21 @@ app.post('/api/generate-index', async (req, res) => {
   try {
     const { text } = req.body;
     if (!text) {
-      return res.status(400).json({ error: 'কোনো টেক্সট পাওয়া যায়নি।' });
+      return res.status(400).json({ error: 'No text provided.' });
     }
 
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const prompt = `Read and analyze the following academic document deeply. Extract the actual main headings, sub-headings, and predict the page numbers based on the text. Return ONLY a strictly formatted JSON array representing the Table of Contents, like this: [{"chapter": "1", "title": "Introduction", "page": "3"}]. Do not return markdown, just JSON.\n\nDocument Text:\n${text}`;
+    const prompt = `You are an expert academic document analyzer. Analyze the following text (it may be unstructured class notes, biology taxonomy, or a lab report). 
+    Extract ALL main topics, categories (e.g., Phylum, Class, Corals, Ecdysis), and key concepts as Table of Contents headings. Predict approximate page numbers.
+    
+    CRITICAL RULES:
+    1. You MUST return a raw JSON array of objects. 
+    2. Each object must have exactly these keys: "chapter" (use a serial number like "1", "2" if no formal chapter exists), "title" (the heading name), and "page".
+    3. Even if the text is messy, extract the top 5-15 logical topics. DO NOT return an empty array.
+    4. Return ONLY valid JSON. No markdown, no \`\`\`json blocks, no explanations.
+    
+    Document Text:
+    ${text}`;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
@@ -31,11 +41,11 @@ app.post('/api/generate-index', async (req, res) => {
     res.json(JSON.parse(output));
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'ইনডেক্স তৈরি করতে সমস্যা হয়েছে।' });
+    res.status(500).json({ error: 'Failed to generate index.' });
   }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`সার্ভার চলছে ${PORT} পোর্টে`);
+  console.log(`Server running on port ${PORT}`);
 });
